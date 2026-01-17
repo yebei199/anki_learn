@@ -1,0 +1,59 @@
+[package]
+name = "rust_template"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[workspace]
+members = ["crates/*"]
+resolver = "2"
+
+[workspace.package]
+rust-version = "1.92"
+version = "0.1.1"
+edition = "2024"
+
+[[example]]
+name = "example1"
+path = "example/lib_1.rs"
+
+[profile.dev]
+incremental = true
+opt-level = 0
+
+[profile.dev.package."*"]
+opt-level = 1           # 所有的依赖库（如 Polars）：稍微优化，防止运行太慢
+
+[profile.test]
+inherits = "dev"        # test 自动继承上述“自己快编、依赖快跑”的策略
+
+[profile.release]
+incremental = false
+opt-level = 3           # 优化级别，值越大越优化，3 是最大优化
+debug = true            # 保留调试信息，以便显示完整的错误信息
+split-debuginfo = "packed"  # 如果需要调试符号，可以配置此项
+lto = "thin"              # 开启链接时优化，通常会提高性能
+panic = "unwind"        # 保留堆栈信息，避免panic时直接终止
+codegen-units = 1
+
+[dependencies]
+anyhow.workspace = true
+tokio.workspace = true
+
+[workspace.dependencies]
+utils = { path = "crates/utils" }
+
+anyhow = "1.0.100"
+tokio = { version = "1.49", features = ["full"] }
+reqwest = { version = "0.13", features = ["json", "multipart"] }
+chrono = "0.4.42"
+chrono-tz = "0.10.4"
+getset = "0.1.6"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.145"
+futures = "0.3.31"
+dotenvy = "0.15.7"
+log = "0.4.29"
+env_logger = "0.11.8"
+config = { version = "0.15.19", features = [] }
+

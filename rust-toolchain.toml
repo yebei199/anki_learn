@@ -1,0 +1,14 @@
+[toolchain]
+channel = "stable"
+profile = "default"
+# 3. 目标平台：列出所有你需要的交叉编译 target
+targets = [
+    "x86_64-unknown-linux-musl"
+]
+
+# 4. 必备组件：确保团队成员的 IDE 都能正常工作
+components = [
+    "rust-src", # 标准库源码（跳转查看源码必备）
+    "clippy", # 代码检查
+    "rustfmt"        # 代码格式化
+]

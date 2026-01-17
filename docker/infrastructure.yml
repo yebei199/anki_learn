@@ -1,0 +1,16 @@
+name: infrastructure
+volumes:
+  grafana_data:
+services:
+  pingora:
+    build:
+      context: ..
+      dockerfile: ./docker/Dockerfile
+      pull: false
+      shm_size: 1gb
+    image: pingora:0.1
+    network_mode: host
+    container_name: pingora
+    environment:
+      - grafana_token=1
+
