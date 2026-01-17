@@ -1,0 +1,8 @@
+[package]
+name = "anki_connect"
+publish = ["tuna"]
+version.workspace = true
+rust-version.workspace = true
+edition.workspace = true
+
+[dependencies]
