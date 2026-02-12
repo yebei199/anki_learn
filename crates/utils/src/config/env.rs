@@ -5,6 +5,7 @@ use std::sync::LazyLock;
 #[derive(Debug, Deserialize)]
 pub struct EnvConfig {
     pub rust_log: Option<String>,
+    pub zhi_pu_api_key: Option<String>,
 }
 
 impl EnvConfig {
