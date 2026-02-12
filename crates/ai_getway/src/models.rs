@@ -1,1 +1,1 @@
-mod zhi_pu;
+pub mod zhi_pu;
