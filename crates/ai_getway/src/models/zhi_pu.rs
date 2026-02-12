@@ -60,17 +60,6 @@ pub struct ZhiPuResponseMessage {
 ///
 /// # 返回
 /// `anyhow::Result<ZhiPuResponse>`: 成功时返回 `ZhiPuResponse`，失败时返回 `anyhow::Error`。
-/// 调用智谱AI的Completion API。
-///
-/// 此函数用于向智谱AI发送请求，获取文本补全或聊天消息的响应。
-/// 它处理API请求的发送、成功响应的解析以及错误（包括可重试错误）的处理。
-///
-/// # 参数
-/// - `api_key`: 用于认证的API密钥。
-/// - `request`: 包含模型、消息和其他参数的智谱AI请求体。
-///
-/// # 返回
-/// `anyhow::Result<ZhiPuResponse>`: 成功时返回 `ZhiPuResponse`，失败时返回 `anyhow::Error`。
 pub async fn zhi_pu_completion(
     api_key: &str,
     request: ZhiPuRequest,
@@ -80,61 +69,22 @@ pub async fn zhi_pu_completion(
     const MAX_RETRIES: u32 = 3;
 
     loop {
+        retry_count += 1; // Increment retry count at the beginning of each loop iteration
+
         let response_result = execute_zhi_pu_request(
             &client, api_key, &request,
         )
         .await;
 
-        match response_result {
-            Ok(response) => {
-                if response.status().is_success() {
-                    let zhi_pu_response: ZhiPuResponse =
-                        response.json().await?;
-                    return Ok(zhi_pu_response);
-                } else {
-                    let status = response.status();
-                    if is_retryable_error(status.as_u16()) {
-                        if retry_count < MAX_RETRIES {
-                            retry_count += 1;
-                            let sleep_duration =
-                                std::time::Duration::from_secs(2u64.pow(retry_count - 1));
-                            log::warn!(
-                                "ZhiPu API transient error {}, retrying in {:?}...",
-                                status,
-                                sleep_duration
-                            );
-                            tokio::time::sleep(
-                                sleep_duration,
-                            )
-                            .await;
-                            continue;
-                        }
-                    }
-
-                    anyhow::bail!(
-                        "{}",
-                        format_error_response(
-                            response, status
-                        )
-                        .await?
-                    );
-                }
-            }
+        let response = match response_result {
+            Ok(res) => res,
             Err(e) => {
-                // Network error, maybe retry?
-                if retry_count < MAX_RETRIES {
-                    retry_count += 1;
-                    let sleep_duration =
-                        std::time::Duration::from_secs(
-                            2u64.pow(retry_count - 1),
-                        );
-                    log::warn!(
-                        "ZhiPu API network error {}, retrying in {:?}...",
-                        e,
-                        sleep_duration
-                    );
-                    tokio::time::sleep(sleep_duration)
-                        .await;
+                if retry_count <= MAX_RETRIES {
+                    wait_before_retry(
+                        retry_count,
+                        &format!("network error: {}", e),
+                    )
+                    .await;
                     continue;
                 }
                 anyhow::bail!(
@@ -142,8 +92,91 @@ pub async fn zhi_pu_completion(
                     e
                 );
             }
+        };
+
+        let status = response.status(); // Capture status before response is moved
+
+        match handle_http_response(
+            response,
+            retry_count,
+            MAX_RETRIES,
+        )
+        .await?
+        {
+            Some(zhi_pu_response) => {
+                return Ok(zhi_pu_response);
+            }
+            None => {
+                // This means it's a retryable HTTP error and retry_count < MAX_RETRIES
+                wait_before_retry(
+                    retry_count,
+                    &format!("transient error {}", status),
+                )
+                .await;
+                continue;
+            }
         }
     }
+}
+
+/// Handles the HTTP response from the ZhiPu API.
+///
+/// This function checks if the response was successful, a retryable error, or a non-retryable error.
+///
+/// # Arguments
+/// - `response`: The `reqwest::Response` received from the API.
+/// - `retry_count`: The current retry attempt number.
+/// - `max_retries`: The maximum number of retries allowed.
+///
+/// # Returns
+/// `Ok(Some(ZhiPuResponse))`: If the request was successful and the response was parsed.
+/// `Ok(None)`: If the error is retryable and `retry_count` is less than `max_retries`.
+/// `Err(anyhow::Error)`: If the error is not retryable or `retry_count` has exceeded `max_retries`.
+async fn handle_http_response(
+    response: reqwest::Response,
+    retry_count: u32,
+    max_retries: u32,
+) -> anyhow::Result<Option<ZhiPuResponse>> {
+    let status = response.status();
+
+    if status.is_success() {
+        let zhi_pu_response: ZhiPuResponse =
+            response.json().await?;
+        return Ok(Some(zhi_pu_response));
+    }
+
+    if is_retryable_error(status.as_u16()) {
+        if retry_count < max_retries {
+            return Ok(None); // Indicate that a retry is needed
+        }
+    }
+
+    anyhow::bail!(
+        "{}",
+        format_error_response(response, status).await?
+    );
+}
+
+/// Waits for a calculated duration before retrying an API call.
+///
+/// This function implements an exponential backoff strategy.
+///
+/// # Arguments
+/// - `retry_count`: The current retry attempt number (1-indexed).
+/// - `error_message`: A string slice describing the error that triggered the retry.
+async fn wait_before_retry(
+    retry_count: u32,
+    error_message: &str,
+) {
+    let sleep_duration = std::time::Duration::from_secs(
+        2u64.pow(retry_count - 1),
+    );
+    log::warn!(
+        "ZhiPu API {} retrying in {:?}...",
+        error_message,
+        sleep_duration
+    );
+    tokio::time::sleep(sleep_duration).await;
 }
 
 async fn execute_zhi_pu_request(
