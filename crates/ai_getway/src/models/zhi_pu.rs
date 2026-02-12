@@ -49,6 +49,28 @@ pub struct ZhiPuResponseMessage {
     pub reasoning_content: Option<String>,
 }
 
+/// 调用智谱AI的Completion API。
+///
+/// 此函数用于向智谱AI发送请求，获取文本补全或聊天消息的响应。
+/// 它处理API请求的发送、成功响应的解析以及错误（包括可重试错误）的处理。
+///
+/// # 参数
+/// - `api_key`: 用于认证的API密钥。
+/// - `request`: 包含模型、消息和其他参数的智谱AI请求体。
+///
+/// # 返回
+/// `anyhow::Result<ZhiPuResponse>`: 成功时返回 `ZhiPuResponse`，失败时返回 `anyhow::Error`。
+/// 调用智谱AI的Completion API。
+///
+/// 此函数用于向智谱AI发送请求，获取文本补全或聊天消息的响应。
+/// 它处理API请求的发送、成功响应的解析以及错误（包括可重试错误）的处理。
+///
+/// # 参数
+/// - `api_key`: 用于认证的API密钥。
+/// - `request`: 包含模型、消息和其他参数的智谱AI请求体。
+///
+/// # 返回
+/// `anyhow::Result<ZhiPuResponse>`: 成功时返回 `ZhiPuResponse`，失败时返回 `anyhow::Error`。
 pub async fn zhi_pu_completion(
     api_key: &str,
     request: ZhiPuRequest,
@@ -58,18 +80,10 @@ pub async fn zhi_pu_completion(
     const MAX_RETRIES: u32 = 3;
 
     loop {
-        let response_result = client
-            .post(format!(
-                "{}/chat/completions",
-                ZHI_PU_API_URL
-            ))
-            .header(
-                "Authorization",
-                format!("Bearer {}", api_key),
-            )
-            .json(&request)
-            .send()
-            .await;
+        let response_result = execute_zhi_pu_request(
+            &client, api_key, &request,
+        )
+        .await;
 
         match response_result {
             Ok(response) => {
@@ -79,11 +93,7 @@ pub async fn zhi_pu_completion(
                     return Ok(zhi_pu_response);
                 } else {
                     let status = response.status();
-                    if status.as_u16() == 500
-                        || status.as_u16() == 502
-                        || status.as_u16() == 503
-                        || status.as_u16() == 504
-                    {
+                    if is_retryable_error(status.as_u16()) {
                         if retry_count < MAX_RETRIES {
                             retry_count += 1;
                             let sleep_duration =
@@ -101,44 +111,13 @@ pub async fn zhi_pu_completion(
                         }
                     }
 
-                    // Handle error response
-                    let error_text = response
-                        .text()
-                        .await
-                        .unwrap_or_else(|_| {
-                            "Failed to read error body"
-                                .to_string()
-                        });
-
-                    // Try to parse as JSON first
-                    if let Ok(json_error) =
-                        serde_json::from_str::<
-                            serde_json::Value,
-                        >(
-                            &error_text
+                    anyhow::bail!(
+                        "{}",
+                        format_error_response(
+                            response, status
                         )
-                    {
-                        anyhow::bail!(
-                            "ZhiPu API error: {}",
-                            json_error
-                        );
-                    } else {
-                        // If HTML or other text, truncate it to avoid huge logs
-                        let truncated_error =
-                            if error_text.len() > 200 {
-                                format!(
-                                    "{}...",
-                                    &error_text[..200]
-                                )
-                            } else {
-                                error_text
-                            };
-                        anyhow::bail!(
-                            "ZhiPu API error ({}): {}",
-                            status,
-                            truncated_error
-                        );
-                    }
+                        .await?
+                    );
                 }
             }
             Err(e) => {
@@ -164,6 +143,56 @@ pub async fn zhi_pu_completion(
                 );
             }
         }
+    }
+}
+
+async fn execute_zhi_pu_request(
+    client: &reqwest::Client,
+    api_key: &str,
+    request_body: &ZhiPuRequest,
+) -> Result<reqwest::Response, reqwest::Error> {
+    client
+        .post(format!(
+            "{}/chat/completions",
+            ZHI_PU_API_URL
+        ))
+        .header(
+            "Authorization",
+            format!("Bearer {}", api_key),
+        )
+        .json(request_body)
+        .send()
+        .await
+}
+
+fn is_retryable_error(status_code: u16) -> bool {
+    matches!(status_code, 500 | 502 | 503 | 504)
+}
+
+async fn format_error_response(
+    response: reqwest::Response,
+    status: reqwest::StatusCode,
+) -> anyhow::Result<String> {
+    let error_text =
+        response.text().await.unwrap_or_else(|_| {
+            "Failed to read error body".to_string()
+        });
+
+    if let Ok(json_error) = serde_json::from_str::<
+        serde_json::Value,
+    >(&error_text)
+    {
+        Ok(format!("ZhiPu API error: {}", json_error))
+    } else {
+        let truncated_error = if error_text.len() > 200 {
+            format!("{}...", &error_text[..200])
+        } else {
+            error_text
+        };
+        Ok(format!(
+            "ZhiPu API error ({}): {}",
+            status, truncated_error
+        ))
     }
 }
 
