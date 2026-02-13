@@ -116,12 +116,10 @@ pub async fn zhi_pu_completion(
     request: ZhiPuRequest,
 ) -> anyhow::Result<ZhiPuResponse> {
     let client = reqwest::Client::new();
-    let mut retry_count = 0;
+    let mut retry_count = 0; // 初始为0，表示尚未重试
     const MAX_RETRIES: u32 = 3;
 
     loop {
-        retry_count += 1; // Increment retry count at the beginning of each loop iteration
-
         let response_result = execute_zhi_pu_request(
             &client, api_key, &request,
         )
@@ -130,7 +128,9 @@ pub async fn zhi_pu_completion(
         let response = match response_result {
             Ok(res) => res,
             Err(e) => {
-                if retry_count <= MAX_RETRIES {
+                if retry_count < MAX_RETRIES {
+                    // 检查是否还能重试
+                    retry_count += 1; // 失败后递增
                     wait_before_retry(
                         retry_count,
                         &format!("network error: {}", e),
@@ -145,7 +145,7 @@ pub async fn zhi_pu_completion(
             }
         };
 
-        let status = response.status(); // Capture status before response is moved
+        let status = response.status();
 
         match handle_http_response(
             response,
@@ -158,7 +158,7 @@ pub async fn zhi_pu_completion(
                 return Ok(zhi_pu_response);
             }
             None => {
-                // This means it's a retryable HTTP error and retry_count < MAX_RETRIES
+                retry_count += 1; // HTTP 可重试错误，递增后重试
                 wait_before_retry(
                     retry_count,
                     &format!("transient error {}", status),
@@ -294,10 +294,10 @@ mod test {
             .expect("ZHI_PU_API_KEY not set");
 
         let request = ZhiPuRequest {
-            model: "glm-4.7".to_string(),
+            model: "glm-4.7-flash".to_string(),
             messages: vec![ZhiPuMessage {
                 role: "user".to_string(),
-                content: "Hi".to_string(),
+                content: "简略回答,你怎么看待anki".to_string(),
             }],
             stream: None,
             temperature: None,
